@@ -27,7 +27,7 @@ cd tts
 python start_tts.py
 ```
 
-필요한 경우 `.env` 파일을 생성하고 OpenAI API 키를 설정하세요:
+필요한 경우 `.env` 파일을 생성하고 SUPERTONE API 키를 설정하세요:
 
 ```env
 ./tts/.env(supertone 사용 시)
@@ -77,42 +77,51 @@ npm run dev
 
 ```
 korean-voice-chat/
-├── server/                 # Express 서버
-│   ├── server.js          # Realtime API 세션 생성
+├── server/                 # Express 서버 (백엔드 + TTS 프록시)
+│   ├── server.js          # Realtime API 세션 생성 + TTS 프록시
 │   ├── package.json
 │   └── .env              # OpenAI API 키 (생성 필요)
 ├── client/               # Vite + TypeScript 클라이언트
 │   ├── src/
-│   │   └── main.ts      # Realtime API 클라이언트 로직
+│   │   └── main.ts      # Realtime API 클라이언트 + TTS 통합
 │   ├── index.html       # 메인 UI
 │   ├── package.json
 │   └── vite.config.ts
+├── tts/                  # Supertone TTS 서버
+│   ├── tts_server.py    # Flask TTS 서버
+│   ├── start_tts.py     # TTS 서버 시작 스크립트
+│   ├── requirements.txt # Python 의존성
+│   ├── tts.py          # 원본 TTS 테스트 코드
+│   └── .env            # Supertone API 키
 ├── README.md
 └── .gitignore
 ```
 
 ## 🔧 기술적 구현
 
-### 핵심: 텍스트 전용 응답 요청
+### 핵심: 세션 업데이트로 텍스트 전용 설정
 
 ```javascript
-// 음성 인식 완료 시 텍스트 전용 응답 요청
-await this.session.transport.sendEvent({
-    type: "response.create",
-    response: {
-        modalities: ["text"], // 🔥 텍스트만 출력
-        instructions: "한국어로 자연스럽게 응답해주세요. 텍스트로만 응답하세요.",
+// 연결 후 세션을 텍스트 전용으로 업데이트
+const event = {
+    type: "session.update",
+    session: {
+        type: "realtime",
+        model: "gpt-4o-realtime-preview-2024-12-17",
+        output_modalities: ["text"], // 🔥 텍스트만 출력
+        instructions: "한국어로 자연스럽게 응답해주세요."
     }
-});
+};
+await this.session.transport.sendEvent(event);
 ```
 
-### 이벤트 처리 흐름
+### TTS 통합 아키텍처
 
-1. `input_audio_transcription.delta` → 실시간 음성 인식
-2. `input_audio_transcription.completed` → 인식 완료 → 텍스트 응답 요청
-3. `response.text.delta` → 실시간 텍스트 스트리밍
-4. `response.text.done` → 텍스트 완료 → 커스텀 TTS 실행
-5. `response.audio.*` → 모든 음성 출력 이벤트 무시
+```
+브라우저 → Node.js 서버 → Python TTS 서버 → Supertone API
+   ↑                                              ↓
+   ← 음성 데이터 (파일 저장 없이 직접 스트리밍) ←
+```
 
 ## 🎯 사용법
 
@@ -123,50 +132,63 @@ await this.session.transport.sendEvent({
 5. 브라우저 TTS로 음성 출력
 6. 계속 대화하기
 
-## 🔄 커스텀 TTS 연동
+## 🔄 Supertone TTS 통합
 
-현재는 브라우저 내장 TTS를 사용하지만, `speakText()` 함수를 수정하여 다음과 같은 TTS 모델로 교체할 수 있습니다:
+### 현재 구현: Supertone API
 
-### 외부 TTS API
-- Google Cloud Text-to-Speech
-- Amazon Polly
-- Microsoft Azure Speech Services
+이 프로젝트는 **Supertone API**를 사용하여 고품질 한국어 TTS를 제공합니다:
 
-### 로컬 TTS 모델
-- Coqui TTS
-- Tacotron2
-- FastSpeech2
+- **음성 품질**: 자연스러운 한국어 발음
+- **실시간 처리**: 파일 저장 없이 메모리에서 직접 스트리밍
+- **중복 방지**: TTS 재생 중 새로운 요청 자동 무시
 
-### 구현 예시
+### TTS 서버 구조
 
-```javascript
-private async speakText(text: string) {
-    // 외부 TTS API 호출 예시
-    const response = await fetch('/api/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: 'ko-KR-female' })
-    });
+```python
+# tts/tts_server.py - Flask 서버
+@app.route('/tts', methods=['POST'])
+def text_to_speech():
+    # Supertone API 호출
+    response = requests.post(SUPERTONE_URL, json=payload, headers=headers)
     
-    const audioBlob = await response.blob();
-    const audioUrl = URL.createObjectURL(audioBlob);
-    const audio = new Audio(audioUrl);
-    audio.play();
-}
+    # 파일 저장 없이 메모리에서 직접 전송
+    audio_data = io.BytesIO(response.content)
+    return send_file(audio_data, mimetype='audio/wav')
 ```
+
+### 다른 TTS 서비스로 교체
+
+`tts/tts_server.py`에서 Supertone API 부분만 교체하면 됩니다:
+
+- **Google Cloud TTS**: `google-cloud-texttospeech`
+- **Amazon Polly**: `boto3`
+- **Azure Speech**: `azure-cognitiveservices-speech`
+- **로컬 TTS**: Coqui TTS, Tacotron2 등
 
 ## 🛠️ 개발 환경
 
+### 백엔드
 - **Node.js**: 18.x 이상
+- **Express**: 5.x
+- **OpenAI Agents**: 0.2.1
+
+### 프론트엔드
 - **TypeScript**: 5.x
 - **Vite**: 7.x
-- **OpenAI Agents**: 0.2.1
+
+### TTS 서버
+- **Python**: 3.7 이상
+- **Flask**: 2.3.x
+- **Supertone API**: 최신 버전
 
 ## 📋 요구사항
 
-- OpenAI API 키 (Realtime API 접근 권한 필요)
-- 마이크 권한 (HTTPS 또는 localhost에서만 작동)
-- 모던 브라우저 (Chrome, Firefox, Safari, Edge)
+- **OpenAI API 키** (Realtime API 접근 권한 필요)
+- **Supertone API 키** (TTS 서비스용)
+- **Python 3.7+** (TTS 서버용)
+- **Node.js 18+** (백엔드 서버용)
+- **마이크 권한** (HTTPS 또는 localhost에서만 작동)
+- **모던 브라우저** (Chrome, Firefox, Safari, Edge)
 
 ## 🐛 문제 해결
 

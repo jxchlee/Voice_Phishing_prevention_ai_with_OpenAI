@@ -11,7 +11,8 @@ app = Flask(__name__)
 CORS(app)  # 브라우저에서 직접 호출할 수 있도록 CORS 허용
 
 API_KEY = os.getenv("SUPERTONE_API_KEY")
-VOICE_ID = "hxVwCRpvnRUbSNcDRvxucE"
+# VOICE_ID = "hxVwCRpvnRUbSNcDRvxucE"
+VOICE_ID = "uRAbBLo6VEjhgDyKFPjxZU"
 URL = f"https://supertoneapi.com/v1/text-to-speech/{VOICE_ID}"
 
 @app.route('/tts', methods=['POST'])
