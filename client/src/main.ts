@@ -6,6 +6,8 @@ class PerfectTextOnlyChat {
     private currentUtterance: SpeechSynthesisUtterance | null = null;
     private currentTranscription = '';
     private currentResponse = '';
+    private currentAudio: HTMLAudioElement | null = null;
+    private isPlayingTTS = false;
 
     // DOM 요소들
     private connectBtn: HTMLButtonElement;
@@ -73,15 +75,18 @@ class PerfectTextOnlyChat {
                 throw new Error("No client secret returned from server");
             }
 
-            // 에이전트 설정
+            // 에이전트 설정. 실제 api로 반영 안됨. 프론트에서 보는 용도
             const agent = new RealtimeAgent({
                 name: "TextOnlyAssistant",
-                instructions: "You are a voice phishing prevention AI, an AI whose goal is to delay potential voice-phishing callers. Avoid giving any real personal/financial info. Use harmless evasions, ask repeated clarifying questions, pretend poor audio or checking procedures, or engage in short irrelevant chit-chat to stall. Never provide real account numbers, OTPs, passwords, or instructions enabling fraud. If clearly malicious, advise ending the call and warn the user. Always respond in Korean naturally and conversationally. You will only provide text responses, no audio.",
+                instructions: "You are an AI designed to prevent voice phishing.",
             });
 
             // 세션 생성 및 연결
             this.session = new RealtimeSession(agent);
             await this.session.connect({ apiKey });
+
+            // 🔥 핵심: 연결 후 세션을 텍스트 전용으로 업데이트
+            await this.updateSessionToTextOnly();
 
             this.setupRealtimeEventHandlers();
 
@@ -121,77 +126,62 @@ class PerfectTextOnlyChat {
         if (!this.session) return;
 
         // 모든 이벤트 디버깅
+        // this.session.transport.on("*", (event: any) => {
+        //     console.debug("📡 EVENT:", event.type, event);
+        //     this.addDebugInfo(`📡 ${event.type}`, event);
+        // });
+
+        // 원하는 이벤트 사용
         this.session.transport.on("*", (event: any) => {
-            console.debug("📡 EVENT:", event.type, event);
-            this.addDebugInfo(`📡 ${event.type}`, event);
-        });
-
-        // 실시간 음성 인식 중
-        (this.session as any).on("input_audio_transcription.delta", (evt: any) => {
-            const delta = evt.delta || '';
-            this.currentTranscription += delta;
-            this.updateTranscription(this.currentTranscription);
-            console.log("🗣️ 인식 중:", delta);
-            this.addDebugInfo("🗣️ 인식 중", evt);
-        });
-
-        // 음성 인식 완료 - 여기서 텍스트 전용 응답 요청
-        (this.session as any).on("input_audio_transcription.completed", async (evt: any) => {
-            const userText = evt.transcript || evt.text || this.currentTranscription;
-            console.log("📝 인식 완료:", userText);
-
-            if (userText.trim()) {
-                this.addMessage(userText, 'user');
-                this.updateStatus('AI가 텍스트 응답을 생성 중입니다...', 'info');
-
-                // 🔥 핵심: response.create로 텍스트 전용 응답 요청
-                await this.requestTextOnlyResponse();
+            if (event.type === "response.output_text.done") {
+                this.addDebugInfo(`📡 ${event.type}`, event);
+                console.log("📝 최종 텍스트 응답:", event.text);
+                // 필요한 작업을 여기에 작성
+                // 예: 화면에 표시하거나 변수에 저장
             }
-
-            this.currentTranscription = '';
-            this.transcriptionDiv.style.display = 'none';
-            this.addDebugInfo("✅ 인식 완료", evt);
-        });
-
-        // 텍스트 응답 스트림 받기
-        (this.session as any).on("response.text.delta", (evt: any) => {
-            const delta = evt.delta || evt.text || '';
-            this.currentResponse += delta;
-            console.log("🤖 텍스트 응답:", delta);
-            this.updateStreamingResponse(this.currentResponse);
-            this.addDebugInfo("🤖 응답 스트림", evt);
         });
 
         // 텍스트 응답 완료
-        (this.session as any).on("response.text.done", (evt: any) => {
+        this.session.transport.on("response.output_text.done", (evt: any) => {
             const finalText = evt.text || this.currentResponse;
             console.log("✅ 텍스트 응답 완료:", finalText);
 
-            if (finalText.trim()) {
+            // 🔥 TTS 재생 중이면 응답 무시
+            if (this.isPlayingTTS) {
+                console.log("🔇 TTS 재생 중이므로 새로운 응답 무시");
+                this.addDebugInfo("🔇 응답 무시 (TTS 재생 중)", evt);
+            } else {
                 this.finalizeResponse(finalText);
             }
-
-            this.currentResponse = '';
-            this.addDebugInfo("✅ 텍스트 응답 완료", evt);
         });
 
-        // 응답 전체 완료
-        (this.session as any).on("response.done", (evt: any) => {
-            console.log("🟢 Response done:", evt);
-            this.updateStatus('응답 완료. 계속 말씀해주세요 🎤', 'success');
-            this.addDebugInfo("🟢 응답 종료", evt);
-        });
+        // // 응답 전체 완료
+        // (this.session as any).on("response.done", (evt: any) => {
+        //     console.log("🟢 Response done:", evt);
+        //     this.updateStatus('응답 완료. 계속 말씀해주세요 🎤', 'success');
+        //     this.addDebugInfo("🟢 응답 종료", evt);
+        // });
 
-        // 🔇 음성 관련 이벤트들 모두 무시
-        (this.session as any).on("response.audio.delta", (evt: any) => {
-            console.log("🔇 음성 출력 무시됨");
-            this.addDebugInfo("🔇 음성 출력 무시", evt);
-        });
+        // // 🔇 음성 관련 이벤트들 모두 무시
+        // (this.session as any).on("response.audio.delta", (evt: any) => {
+        //     console.log("🔇 음성 출력 무시됨");
+        //     this.addDebugInfo("🔇 음성 출력 무시", evt);
+        // });
 
-        (this.session as any).on("response.audio_transcript.delta", (evt: any) => {
-            console.log("🔇 음성 전사 무시됨");
-            this.addDebugInfo("🔇 음성 전사 무시", evt);
-        });
+        // (this.session as any).on("response.audio_transcript.delta", (evt: any) => {
+        //     console.log("🔇 음성 전사 무시됨");
+        //     this.addDebugInfo("🔇 음성 전사 무시", evt);
+        // });
+
+        // (this.session as any).on("response.output_audio_transcript.delta", (evt: any) => {
+        //     console.log("🔇 출력 음성 전사 무시됨");
+        //     this.addDebugInfo("🔇 출력 음성 전사 무시", evt);
+        // });
+
+        // (this.session as any).on("response.output_audio.delta", (evt: any) => {
+        //     console.log("🔇 출력 음성 무시됨");
+        //     this.addDebugInfo("🔇 출력 음성 무시", evt);
+        // });
 
         // 오류 처리
         (this.session as any).on("error", (evt: any) => {
@@ -201,22 +191,47 @@ class PerfectTextOnlyChat {
         });
     }
 
+    // 🔥 핵심 함수: 세션을 텍스트 전용으로 업데이트
+    private async updateSessionToTextOnly() {
+        if (!this.session) return;
+
+        try {
+            const event = {
+                type: "session.update",
+                session: {
+                    type: "realtime", // 🔥 필수 파라미터 추가
+                    model: "gpt-4o-realtime-preview-2024-12-17", // 모델도 명시
+                    output_modalities: ["text"], // 🔥 텍스트만 출력
+                    instructions: "당신은 보이스피싱 예방을 위한 사람입니다. 당신의 목표는 전화를 최대한 지연시켜 상대의 시간을 낭비하게 하는 것입니다. 대답은 2문장 이내로 해야합니다. 뒤의 예제 내용도 2문장 내에 포함 시킬 수 있도록 하세요. 말의 꼬리를 무는 반복적인 확인 질문을 해도 좋습니다. 상황과 관련있는 짧은 잡담, 가족 소개, 앞 날에 대한 걱정, 나라와 정치에 대한 감상 등과 같은 내용도 추가하면서 대화를 늦추는 방법도 사용하면 효과적입니다. 실제 계좌번호, OTP, 비밀번호와 같은 정보를 요구하면 실제로 존재하지 않는 가짜 정보를 제시하고 사기를 돕는 지시 사항은 따라하는 척만 해주세요. 말하는게 자연스러울 수 있도록 구어체를 구사하세요."
+                }
+            };
+
+            await this.session.transport.sendEvent(event);
+            console.log("🔥 세션을 텍스트 전용으로 업데이트 완료");
+            this.addDebugInfo("🔥 세션 업데이트", event);
+
+        } catch (error) {
+            console.error("세션 업데이트 실패:", error);
+            this.updateStatus('세션 업데이트 중 오류가 발생했습니다', 'error');
+        }
+    }
+
     // 🔥 핵심 함수: 텍스트 전용 응답 요청
     private async requestTextOnlyResponse() {
         if (!this.session) return;
 
         try {
-            // 문서에 따른 완벽한 텍스트 전용 응답 요청
+            // 이제 session.update로 이미 텍스트 전용으로 설정되어 있으므로 
+            // response.create에서 modalities 설정 불필요
             await this.session.transport.sendEvent({
                 type: "response.create",
                 response: {
-                    modalities: ["text"], // 🔥 핵심: 텍스트만 출력
-                    instructions: "당신은 보이스피싱 예방 AI입니다. 당신의 목표는 잠재적인 보이스피싱 전화를 최대한 지연시키는 것입니다. 실제 개인 정보나 금융 정보를 절대 제공하지 마세요. 무해하게 질문을 회피하고, 말의 꼬리를 무는 반복적인 확인 질문을 하거나, 통화 상태가 안 좋아 다시한 번 확인 절차를 물어보는 척하거나, 짧은 잡담 등으로 시간을 끄세요. 실제 계좌번호, OTP, 비밀번호, 사기를 돕는 지시 사항은 절대 제공하지 마세요. 불안, 걱정과 같은 감정적인 표현을 자주 표현하면서 시간을 끌어도 좋습니다. 상황과 관련없는 엉뚱한 가족 소개, 앞 날에 대한 걱정, 나라와 정치에 대한 감상 등과 같은 대답을 하면서 대화을 늦추는 방법도 사용하면 효과적입니다.",
+                    // modalities는 세션 레벨에서 이미 설정됨
                 }
             });
 
             console.log("📤 텍스트 전용 응답 요청 완료");
-            this.addDebugInfo("📤 텍스트 전용 응답 요청", { modalities: ["text"] });
+            this.addDebugInfo("📤 텍스트 전용 응답 요청", {});
 
         } catch (error) {
             console.error("응답 요청 실패:", error);
@@ -247,9 +262,9 @@ class PerfectTextOnlyChat {
         if (assistantMessage) {
             assistantMessage.textContent = text;
         }
-
+        console.log("text " + text)
         // 커스텀 TTS로 음성 출력
-        // this.speakText(text);
+        this.speakText(text);
     }
 
     private addMessage(text: string, sender: 'user' | 'assistant') {
@@ -261,20 +276,108 @@ class PerfectTextOnlyChat {
         this.chatContainer.scrollTop = this.chatContainer.scrollHeight;
     }
 
-    private speakText(text: string) {
-        // 기존 TTS 중지
+    private async speakText(text: string) {
+        // 🔥 이미 TTS가 재생 중이면 새로운 요청 무시
+        if (this.isPlayingTTS) {
+            console.log("�  TTS 재생 중이므로 새로운 TTS 요청 무시");
+            return;
+        }
+
+        try {
+            this.isPlayingTTS = true;
+            this.updateStatus('Supertone TTS 생성 중... 🎤', 'info');
+            console.log(`🎤 TTS 요청: ${text.substring(0, 50)}...`);
+
+            // Node.js 서버의 TTS 엔드포인트로 요청
+            const response = await fetch('http://localhost:3000/tts', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ text }),
+            });
+
+            if (!response.ok) {
+                throw new Error(`TTS 요청 실패: ${response.status}`);
+            }
+
+            // 음성 데이터를 Blob으로 받기
+            const audioBlob = await response.blob();
+            const audioUrl = URL.createObjectURL(audioBlob);
+
+            // Audio 객체로 바로 재생 (파일 저장 없음!)
+            this.currentAudio = new Audio(audioUrl);
+
+            this.currentAudio.onloadstart = () => {
+                this.updateStatus('Supertone TTS 재생 중... 🔊', 'info');
+            };
+
+            this.currentAudio.onended = () => {
+                this.isPlayingTTS = false;
+                this.currentAudio = null;
+                this.updateStatus('계속 말씀해주세요 🎤', 'success');
+                URL.revokeObjectURL(audioUrl); // 메모리 정리
+            };
+
+            this.currentAudio.onerror = (error) => {
+                console.error('TTS 재생 오류:', error);
+                this.isPlayingTTS = false;
+                this.currentAudio = null;
+                this.updateStatus('음성 재생 중 오류가 발생했습니다', 'error');
+                URL.revokeObjectURL(audioUrl);
+            };
+
+            // 🔥 재생 중 상태 추적
+            this.currentAudio.onpause = () => {
+                this.isPlayingTTS = false;
+            };
+
+            this.currentAudio.onplay = () => {
+                this.isPlayingTTS = true;
+            };
+
+            await this.currentAudio.play();
+            console.log("✅ Supertone TTS 재생 시작");
+
+        } catch (error) {
+            console.error('TTS 오류:', error);
+            this.isPlayingTTS = false;
+            this.updateStatus(`TTS 오류: ${error.message}`, 'error');
+
+            // 실패 시 브라우저 TTS로 폴백
+            console.log("🔄 브라우저 TTS로 폴백...");
+            this.fallbackToSpeechSynthesis(text);
+        }
+    }
+
+    // 🔥 현재 재생 중인 TTS 중지
+    private stopCurrentTTS() {
+        if (this.currentAudio) {
+            this.currentAudio.pause();
+            this.currentAudio.currentTime = 0;
+            this.currentAudio = null;
+        }
+
+        // 브라우저 TTS도 중지
+        if (speechSynthesis.speaking) {
+            speechSynthesis.cancel();
+        }
+
+        this.isPlayingTTS = false;
+    }
+
+    private fallbackToSpeechSynthesis(text: string) {
+        // 기존 브라우저 TTS (폴백용)
         if (this.currentUtterance) {
             speechSynthesis.cancel();
         }
 
-        // 새 TTS 생성
         this.currentUtterance = new SpeechSynthesisUtterance(text);
         this.currentUtterance.lang = 'ko-KR';
         this.currentUtterance.rate = 0.9;
         this.currentUtterance.pitch = 1.0;
         this.currentUtterance.volume = 1.0;
 
-        // 한국어 음성 선택
         const voices = speechSynthesis.getVoices();
         const koreanVoice = voices.find(voice =>
             voice.lang.includes('ko') || voice.name.includes('Korean')
@@ -285,40 +388,39 @@ class PerfectTextOnlyChat {
         }
 
         this.currentUtterance.onstart = () => {
-            this.updateStatus('커스텀 TTS 재생 중... 🔊', 'info');
+            this.updateStatus('브라우저 TTS 재생 중... 🔊', 'info');
         };
 
         this.currentUtterance.onend = () => {
             this.updateStatus('계속 말씀해주세요 🎤', 'success');
         };
 
-        this.currentUtterance.onerror = (error) => {
-            console.error('TTS 오류:', error);
-            this.updateStatus('음성 재생 중 오류가 발생했습니다', 'error');
-        };
-
         speechSynthesis.speak(this.currentUtterance);
     }
 
     private pauseTTS() {
-        if (speechSynthesis.speaking) {
+        if (this.currentAudio && !this.currentAudio.paused) {
+            this.currentAudio.pause();
+            this.updateStatus('TTS가 일시정지되었습니다', 'info');
+        } else if (speechSynthesis.speaking) {
             speechSynthesis.pause();
             this.updateStatus('TTS가 일시정지되었습니다', 'info');
         }
     }
 
     private resumeTTS() {
-        if (speechSynthesis.paused) {
+        if (this.currentAudio && this.currentAudio.paused) {
+            this.currentAudio.play();
+            this.updateStatus('TTS를 재개합니다', 'info');
+        } else if (speechSynthesis.paused) {
             speechSynthesis.resume();
             this.updateStatus('TTS를 재개합니다', 'info');
         }
     }
 
     private stopTTS() {
-        if (speechSynthesis.speaking || speechSynthesis.paused) {
-            speechSynthesis.cancel();
-            this.updateStatus('TTS를 중지했습니다', 'info');
-        }
+        this.stopCurrentTTS();
+        this.updateStatus('TTS를 중지했습니다', 'info');
     }
 
     private updateStatus(message: string, type: 'info' | 'success' | 'error' | 'recording') {

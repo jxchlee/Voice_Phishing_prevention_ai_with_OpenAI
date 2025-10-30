@@ -20,7 +20,25 @@ git clone <repository-url>
 cd korean-voice-chat
 ```
 
-### 2. 서버 설정
+### 2. TTS 서버 설정 (Supertone API)
+
+```bash
+cd tts
+python start_tts.py
+```
+
+필요한 경우 `.env` 파일을 생성하고 OpenAI API 키를 설정하세요:
+
+```env
+./tts/.env(supertone 사용 시)
+SUPERTONE_API_KEY=your_api_key_here
+```
+
+TTS 서버가 `http://localhost:5000`에서 실행됩니다.
+
+### 3. Node.js 서버 설정
+
+새 터미널에서:
 
 ```bash
 cd server
@@ -34,13 +52,14 @@ OPENAI_API_KEY=your_openai_api_key_here
 PORT=3000
 ```
 
+
 서버 실행:
 
 ```bash
-npm start
+node server.js
 ```
 
-### 3. 클라이언트 설정
+### 4. 클라이언트 설정
 
 새 터미널에서:
 
@@ -50,7 +69,7 @@ npm install
 npm run dev
 ```
 
-### 4. 접속
+### 5. 접속
 
 브라우저에서 `http://localhost:5173`에 접속하세요.
 

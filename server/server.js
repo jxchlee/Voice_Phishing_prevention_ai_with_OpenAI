@@ -35,7 +35,8 @@ app.post("/session", async (req, res) => {
         session: {
           type: "realtime",
           model: "gpt-4o-realtime-preview-2024-12-17",
-          // 기본 설정만 사용 - 클라이언트에서 response.create로 제어
+          output_modalities: ["text"], // 서버에서 텍스트만 출력하도록 강제
+
         },
       }),
     });
@@ -58,7 +59,49 @@ app.post("/session", async (req, res) => {
   }
 });
 
+// TTS 프록시 엔드포인트
+app.post("/tts", async (req, res) => {
+  try {
+    const { text } = req.body;
+    
+    if (!text) {
+      return res.status(400).json({ error: "Text is required" });
+    }
+
+    console.log(`🎤 TTS 요청: ${text.substring(0, 50)}...`);
+
+    // Python TTS 서버로 요청 전달
+    const ttsResponse = await fetch("http://localhost:5000/tts", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ text }),
+    });
+
+    if (!ttsResponse.ok) {
+      throw new Error(`TTS server error: ${ttsResponse.status}`);
+    }
+
+    // 음성 데이터를 그대로 브라우저로 전달
+    const audioBuffer = await ttsResponse.arrayBuffer();
+    
+    res.set({
+      'Content-Type': 'audio/wav',
+      'Content-Length': audioBuffer.byteLength
+    });
+    
+    res.send(Buffer.from(audioBuffer));
+    console.log("✅ TTS 음성 데이터 전송 완료");
+    
+  } catch (err) {
+    console.error("TTS proxy error:", err);
+    res.status(500).json({ error: "TTS processing failed" });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
+  console.log(`🎤 TTS endpoint: http://localhost:${PORT}/tts`);
 });
