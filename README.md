@@ -2,6 +2,12 @@
 
 OpenAI Realtime API를 사용한 한국어 음성 대화 시스템입니다. 음성 입력을 받아 텍스트 응답을 생성하고, 커스텀 TTS로 음성을 출력합니다.
 
+## 🎥 데모 영상
+
+[![Anti Voice Phishing Demo](https://img.youtube.com/vi/wRz_R1ABQJo/maxresdefault.jpg)](https://youtu.be/wRz_R1ABQJo)
+
+*클릭하여 데모 영상을 시청하세요*
+
 ## ✨ 주요 특징
 
 - 🎤 **실시간 음성 입력**: OpenAI Realtime API의 고품질 음성 인식
@@ -16,8 +22,9 @@ OpenAI Realtime API를 사용한 한국어 음성 대화 시스템입니다. 음
 ### 1. 저장소 클론
 
 ```bash
-git clone <repository-url>
-cd korean-voice-chat
+git clone https://github.com/jxchlee/Voice_Phishing_prevention_ai_with_OpenAI.git
+cd Voice_Phishing_prevention_ai_with_OpenAI
+
 ```
 
 ### 2. TTS 서버 설정 (Supertone API)
